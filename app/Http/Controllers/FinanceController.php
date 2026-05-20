@@ -1,0 +1,504 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Account;
+use App\Models\Budget;
+use App\Models\Category;
+use App\Models\SavingGoal;
+use App\Models\Transaction;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
+
+class FinanceController extends Controller
+{
+    public function dashboard(Request $request)
+    {
+        $selectedMonth = Carbon::createFromFormat('Y-m', $request->query('month', now()->format('Y-m')))->startOfMonth();
+        $start = $selectedMonth->copy()->startOfMonth();
+        $end = $selectedMonth->copy()->endOfMonth();
+
+        $transactions = Transaction::with(['account', 'category'])
+            ->latest('transaction_date')
+            ->latest()
+            ->get();
+
+        $monthlyTransactions = $transactions->filter(fn (Transaction $transaction) => $transaction->transaction_date->betweenIncluded($start, $end));
+        $income = (float) $monthlyTransactions->where('type', 'income')->sum('amount');
+        $expense = (float) $monthlyTransactions->where('type', 'expense')->sum('amount');
+        $balance = Account::with('transactions')->get()->sum(fn (Account $account) => $account->balance);
+        $savingsRate = $income > 0 ? round((($income - $expense) / $income) * 100, 1) : 0;
+
+        $categoryExpenses = $monthlyTransactions
+            ->where('type', 'expense')
+            ->groupBy('category_id')
+            ->map(function ($items) use ($expense) {
+                $category = $items->first()->category;
+                $total = (float) $items->sum('amount');
+
+                return [
+                    'name' => $category->name,
+                    'color' => $category->color,
+                    'total' => $total,
+                    'percentage' => $expense > 0 ? round(($total / $expense) * 100, 1) : 0,
+                ];
+            })
+            ->sortByDesc('total')
+            ->values();
+
+        $cashflow = collect(range(5, 0))->map(function (int $monthsAgo) use ($transactions) {
+            $month = now()->subMonths($monthsAgo)->startOfMonth();
+            $items = $transactions->filter(fn (Transaction $transaction) => $transaction->transaction_date->isSameMonth($month));
+
+            return [
+                'label' => $month->translatedFormat('M Y'),
+                'income' => (float) $items->where('type', 'income')->sum('amount'),
+                'expense' => (float) $items->where('type', 'expense')->sum('amount'),
+            ];
+        });
+
+        $budgets = $this->getBudgetsWithProgress($selectedMonth, $monthlyTransactions);
+        
+        // Advanced KPIs
+        $budgetCompliance = $budgets->count() > 0 ? round(100 - $budgets->avg('progress')) : 100;
+        
+        $prevMonth = $selectedMonth->copy()->subMonth();
+        $prevMonthTransactions = Transaction::whereYear('transaction_date', $prevMonth->year)
+            ->whereMonth('transaction_date', $prevMonth->month)
+            ->where('type', 'expense')
+            ->sum('amount');
+        $expenseTrend = $prevMonthTransactions > 0 
+            ? round((($expense - $prevMonthTransactions) / $prevMonthTransactions) * 100, 1)
+            : 0;
+
+        $insights = $this->buildInsights($income, $expense, $categoryExpenses, $budgets, $savingsRate);
+
+        return view('finance.dashboard', [
+            'selectedMonth' => $selectedMonth,
+            'summary' => compact('income', 'expense', 'balance', 'savingsRate', 'budgetCompliance', 'expenseTrend'),
+            'categoryExpenses' => $categoryExpenses,
+            'cashflow' => $cashflow,
+            'insights' => $insights,
+            'recentTransactions' => $transactions->take(5),
+            'savingGoals' => SavingGoal::orderBy('target_date')->get(),
+        ]);
+    }
+
+    public function analytics(Request $request)
+    {
+        $selectedMonth = Carbon::createFromFormat('Y-m', $request->query('month', now()->format('Y-m')))->startOfMonth();
+        $start = $selectedMonth->copy()->startOfMonth();
+        $end = $selectedMonth->copy()->endOfMonth();
+
+        $transactions = Transaction::with(['account', 'category'])
+            ->whereBetween('transaction_date', [$selectedMonth->copy()->subMonths(11)->startOfMonth(), $end])
+            ->oldest('transaction_date')
+            ->get();
+
+        $monthlyTransactions = $transactions->filter(fn (Transaction $transaction) => $transaction->transaction_date->betweenIncluded($start, $end));
+        $monthlyIncome = (float) $monthlyTransactions->where('type', 'income')->sum('amount');
+        $monthlyExpense = (float) $monthlyTransactions->where('type', 'expense')->sum('amount');
+        $monthlyNet = $monthlyIncome - $monthlyExpense;
+        $balance = Account::with('transactions')->get()->sum(fn (Account $account) => $account->balance);
+
+        $series = collect(range(11, 0))->map(function (int $monthsAgo) use ($selectedMonth, $transactions) {
+            $month = $selectedMonth->copy()->subMonths($monthsAgo)->startOfMonth();
+            $items = $transactions->filter(fn (Transaction $transaction) => $transaction->transaction_date->isSameMonth($month));
+            $income = (float) $items->where('type', 'income')->sum('amount');
+            $expense = (float) $items->where('type', 'expense')->sum('amount');
+
+            return [
+                'label' => $month->translatedFormat('M Y'),
+                'income' => $income,
+                'expense' => $expense,
+                'net' => $income - $expense,
+                'savings_rate' => $income > 0 ? round((($income - $expense) / $income) * 100, 1) : 0,
+                'transactions' => $items->count(),
+            ];
+        });
+
+        $avgIncome = round($series->avg('income') ?? 0);
+        $avgExpense = round($series->avg('expense') ?? 0);
+        $avgNet = round($series->avg('net') ?? 0);
+        $expenseVolatility = $this->calculateVolatility($series->pluck('expense')->all());
+        $runwayMonths = $avgExpense > 0 ? round($balance / $avgExpense, 1) : null;
+
+        $daysInMonth = $selectedMonth->daysInMonth;
+        $elapsedDays = $selectedMonth->isSameMonth(now()) ? max(1, now()->day) : $daysInMonth;
+        $projectedExpense = $elapsedDays > 0 ? round(($monthlyExpense / $elapsedDays) * $daysInMonth) : 0;
+        $projectedNet = $monthlyIncome - $projectedExpense;
+        $projectedSavingsRate = $monthlyIncome > 0 ? round(($projectedNet / $monthlyIncome) * 100, 1) : 0;
+
+        $budgets = $this->getBudgetsWithProgress($selectedMonth, $monthlyTransactions);
+        $budgetAtRisk = $budgets
+            ->filter(fn ($budget) => $budget['progress'] >= 75 || $budget['remaining'] < 0)
+            ->sortByDesc('progress')
+            ->values();
+
+        $categoryAnalysis = $monthlyTransactions
+            ->where('type', 'expense')
+            ->groupBy('category_id')
+            ->map(function ($items) use ($monthlyExpense, $budgets) {
+                $category = $items->first()->category;
+                $budget = $budgets->firstWhere('category.id', $category->id);
+                $total = (float) $items->sum('amount');
+                $progress = $budget ? $budget['progress'] : null;
+
+                return [
+                    'name' => $category->name,
+                    'icon' => $category->icon,
+                    'color' => $category->color,
+                    'total' => $total,
+                    'count' => $items->count(),
+                    'average' => $items->count() > 0 ? round($total / $items->count()) : 0,
+                    'percentage' => $monthlyExpense > 0 ? round(($total / $monthlyExpense) * 100, 1) : 0,
+                    'budget_limit' => $budget['limit'] ?? null,
+                    'budget_remaining' => $budget['remaining'] ?? null,
+                    'risk' => $progress === null ? 'Belum ada budget' : ($progress >= 100 ? 'Melewati batas' : ($progress >= 75 ? 'Perlu dijaga' : 'Sehat')),
+                ];
+            })
+            ->sortByDesc('total')
+            ->values();
+
+        $merchantAnalysis = $monthlyTransactions
+            ->where('type', 'expense')
+            ->filter(fn (Transaction $transaction) => filled($transaction->merchant))
+            ->groupBy(fn (Transaction $transaction) => strtolower($transaction->merchant))
+            ->map(function ($items) {
+                $total = (float) $items->sum('amount');
+
+                return [
+                    'name' => $items->first()->merchant,
+                    'total' => $total,
+                    'count' => $items->count(),
+                    'average' => $items->count() > 0 ? round($total / $items->count()) : 0,
+                ];
+            })
+            ->sortByDesc('total')
+            ->take(8)
+            ->values();
+
+        $weekdayAnalysis = collect(range(0, 6))->map(function (int $day) use ($monthlyTransactions) {
+            $items = $monthlyTransactions
+                ->where('type', 'expense')
+                ->filter(fn (Transaction $transaction) => $transaction->transaction_date->dayOfWeek === $day);
+
+            return [
+                'label' => Carbon::create()->startOfWeek(Carbon::SUNDAY)->addDays($day)->translatedFormat('D'),
+                'total' => (float) $items->sum('amount'),
+                'count' => $items->count(),
+            ];
+        });
+
+        $insights = $this->buildAdvancedInsights(
+            $monthlyIncome,
+            $monthlyExpense,
+            $projectedExpense,
+            $projectedSavingsRate,
+            $categoryAnalysis,
+            $budgetAtRisk,
+            $expenseVolatility,
+            $runwayMonths
+        );
+
+        return view('finance.analytics', [
+            'selectedMonth' => $selectedMonth,
+            'summary' => [
+                'balance' => $balance,
+                'income' => $monthlyIncome,
+                'expense' => $monthlyExpense,
+                'net' => $monthlyNet,
+                'avgIncome' => $avgIncome,
+                'avgExpense' => $avgExpense,
+                'avgNet' => $avgNet,
+                'runwayMonths' => $runwayMonths,
+                'expenseVolatility' => $expenseVolatility,
+                'projectedExpense' => $projectedExpense,
+                'projectedNet' => $projectedNet,
+                'projectedSavingsRate' => $projectedSavingsRate,
+                'recurringExpense' => (float) $monthlyTransactions->where('type', 'expense')->where('is_recurring', true)->sum('amount'),
+            ],
+            'series' => $series,
+            'categoryAnalysis' => $categoryAnalysis,
+            'merchantAnalysis' => $merchantAnalysis,
+            'weekdayAnalysis' => $weekdayAnalysis,
+            'budgetAtRisk' => $budgetAtRisk,
+            'insights' => $insights,
+        ]);
+    }
+
+    public function transactions(Request $request)
+    {
+        $selectedMonth = Carbon::createFromFormat('Y-m', $request->query('month', now()->format('Y-m')))->startOfMonth();
+        
+        $transactions = Transaction::with(['account', 'category'])
+            ->whereYear('transaction_date', $selectedMonth->year)
+            ->whereMonth('transaction_date', $selectedMonth->month)
+            ->latest('transaction_date')
+            ->latest()
+            ->paginate(15);
+
+        return view('finance.transactions', [
+            'transactions' => $transactions,
+            'selectedMonth' => $selectedMonth,
+            'accounts' => Account::orderBy('name')->get(),
+            'categories' => Category::orderBy('type')->orderBy('name')->get(),
+        ]);
+    }
+
+    public function accounts()
+    {
+        return view('finance.accounts', [
+            'accounts' => Account::with('transactions')->orderBy('name')->get(),
+        ]);
+    }
+
+    public function budgets(Request $request)
+    {
+        $selectedMonth = Carbon::createFromFormat('Y-m', $request->query('month', now()->format('Y-m')))->startOfMonth();
+        $start = $selectedMonth->copy()->startOfMonth();
+        $end = $selectedMonth->copy()->endOfMonth();
+
+        $monthlyTransactions = Transaction::whereBetween('transaction_date', [$start, $end])->get();
+        $budgets = $this->getBudgetsWithProgress($selectedMonth, $monthlyTransactions);
+
+        return view('finance.budgets', [
+            'budgets' => $budgets,
+            'selectedMonth' => $selectedMonth,
+            'expenseCategories' => Category::where('type', 'expense')->orderBy('name')->get(),
+        ]);
+    }
+
+    public function goals()
+    {
+        return view('finance.goals', [
+            'savingGoals' => SavingGoal::orderBy('target_date')->get(),
+        ]);
+    }
+
+    public function storeTransaction(Request $request)
+    {
+        Transaction::create($request->validate([
+            'account_id' => ['required', 'exists:accounts,id'],
+            'category_id' => ['required', 'exists:categories,id'],
+            'type' => ['required', Rule::in(['income', 'expense'])],
+            'amount' => ['required', 'numeric', 'min:1'],
+            'transaction_date' => ['required', 'date'],
+            'description' => ['required', 'string', 'max:255'],
+            'merchant' => ['nullable', 'string', 'max:255'],
+            'payment_method' => ['nullable', 'string', 'max:255'],
+            'is_recurring' => ['nullable', 'boolean'],
+            'notes' => ['nullable', 'string', 'max:1000'],
+        ]) + ['is_recurring' => $request->boolean('is_recurring')]);
+
+        return back()->with('status', 'Transaksi berhasil ditambahkan.');
+    }
+
+    public function destroyTransaction(Transaction $transaction)
+    {
+        $transaction->delete();
+        return back()->with('status', 'Transaksi dihapus.');
+    }
+
+    public function storeAccount(Request $request)
+    {
+        Account::create($request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'type' => ['required', 'string', 'max:50'],
+            'opening_balance' => ['required', 'numeric', 'min:0'],
+            'color' => ['required', 'string', 'max:20'],
+        ]));
+
+        return back()->with('status', 'Akun baru ditambahkan.');
+    }
+
+    public function storeBudget(Request $request)
+    {
+        $data = $request->validate([
+            'category_id' => ['required', 'exists:categories,id'],
+            'limit_amount' => ['required', 'numeric', 'min:1'],
+            'month' => ['required', 'integer', 'between:1,12'],
+            'year' => ['required', 'integer', 'between:2020,2100'],
+        ]);
+
+        Budget::updateOrCreate(
+            ['category_id' => $data['category_id'], 'month' => $data['month'], 'year' => $data['year']],
+            ['limit_amount' => $data['limit_amount']]
+        );
+
+        return back()->with('status', 'Anggaran diperbarui.');
+    }
+
+    public function storeGoal(Request $request)
+    {
+        SavingGoal::create($request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'target_amount' => ['required', 'numeric', 'min:1'],
+            'current_amount' => ['nullable', 'numeric', 'min:0'],
+            'target_date' => ['nullable', 'date'],
+            'color' => ['required', 'string', 'max:20'],
+        ]));
+
+        return back()->with('status', 'Target tabungan baru berhasil dibuat.');
+    }
+
+    public function updateGoal(Request $request, SavingGoal $goal)
+    {
+        $data = $request->validate(['amount' => ['required', 'numeric', 'min:1']]);
+        $goal->increment('current_amount', $data['amount']);
+
+        return back()->with('status', 'Progress target tabungan bertambah.');
+    }
+
+    public function destroyGoal(SavingGoal $goal)
+    {
+        $goal->delete();
+        return back()->with('status', 'Target tabungan telah dihapus.');
+    }
+
+    private function getBudgetsWithProgress($selectedMonth, $monthlyTransactions)
+    {
+        return Budget::with('category')
+            ->where('month', $selectedMonth->month)
+            ->where('year', $selectedMonth->year)
+            ->get()
+            ->map(function (Budget $budget) use ($monthlyTransactions) {
+                $spent = (float) $monthlyTransactions
+                    ->where('type', 'expense')
+                    ->where('category_id', $budget->category_id)
+                    ->sum('amount');
+
+                return [
+                    'id' => $budget->id,
+                    'category' => $budget->category,
+                    'limit' => (float) $budget->limit_amount,
+                    'spent' => $spent,
+                    'remaining' => (float) $budget->limit_amount - $spent,
+                    'progress' => $budget->limit_amount > 0 ? min(100, round(($spent / (float) $budget->limit_amount) * 100)) : 0,
+                ];
+            });
+    }
+
+    private function buildInsights(float $income, float $expense, $categoryExpenses, $budgets, float $savingsRate): array
+    {
+        $insights = [];
+
+        if ($income > 0 && $expense > $income * 0.8) {
+            $insights[] = 'Pengeluaran sudah melewati 80% pemasukan bulan ini. Prioritaskan transaksi wajib dan tunda belanja fleksibel.';
+        }
+
+        if ($savingsRate >= 20) {
+            $insights[] = 'Rasio tabungan sehat di atas 20%. Pertahankan pola ini untuk mempercepat target finansial.';
+        } elseif ($income > 0) {
+            $insights[] = 'Rasio tabungan masih rendah. Coba set auto-saving saat pemasukan masuk.';
+        }
+
+        $topCategory = $categoryExpenses->first();
+        if ($topCategory) {
+            $insights[] = "Kategori terbesar bulan ini adalah {$topCategory['name']} ({$topCategory['percentage']}%). Ini kandidat utama untuk dievaluasi.";
+        }
+
+        $overBudget = $budgets->first(fn ($budget) => $budget['remaining'] < 0);
+        if ($overBudget) {
+            $insights[] = "Anggaran {$overBudget['category']->name} sudah lewat batas. Kurangi pengeluaran kategori ini sampai bulan depan.";
+        }
+
+        return $insights ?: ['Data belum cukup untuk analisa mendalam. Tambahkan transaksi rutin agar rekomendasi lebih akurat.'];
+    }
+
+    private function calculateVolatility(array $values): float
+    {
+        $values = array_map('floatval', array_filter($values, fn ($value) => $value > 0));
+        $count = count($values);
+
+        if ($count < 2) {
+            return 0;
+        }
+
+        $average = array_sum($values) / $count;
+        if ($average <= 0) {
+            return 0;
+        }
+
+        $variance = array_sum(array_map(fn ($value) => ($value - $average) ** 2, $values)) / $count;
+
+        return round((sqrt($variance) / $average) * 100, 1);
+    }
+
+    private function buildAdvancedInsights(
+        float $income,
+        float $expense,
+        float $projectedExpense,
+        float $projectedSavingsRate,
+        $categoryAnalysis,
+        $budgetAtRisk,
+        float $expenseVolatility,
+        ?float $runwayMonths
+    ): array {
+        $insights = [];
+
+        if ($income > 0 && $projectedExpense > $income) {
+            $over = $projectedExpense - $income;
+            $insights[] = [
+                'level' => 'danger',
+                'title' => 'Proyeksi defisit bulan ini',
+                'body' => 'Jika pola belanja tidak berubah, pengeluaran berpotensi melewati pemasukan sekitar Rp '.number_format($over, 0, ',', '.').'.',
+            ];
+        }
+
+        if ($projectedSavingsRate >= 20) {
+            $insights[] = [
+                'level' => 'success',
+                'title' => 'Rasio tabungan dalam zona sehat',
+                'body' => "Proyeksi rasio tabungan {$projectedSavingsRate}%. Pertahankan alokasi ini dan arahkan surplus ke target prioritas.",
+            ];
+        } elseif ($income > 0) {
+            $insights[] = [
+                'level' => 'warning',
+                'title' => 'Rasio tabungan perlu dinaikkan',
+                'body' => "Proyeksi rasio tabungan {$projectedSavingsRate}%. Target aman biasanya minimal 20% dari pemasukan.",
+            ];
+        }
+
+        $topCategory = $categoryAnalysis->first();
+        if ($topCategory) {
+            $insights[] = [
+                'level' => 'info',
+                'title' => 'Kategori paling dominan',
+                'body' => "{$topCategory['name']} menyerap {$topCategory['percentage']}% dari pengeluaran bulan ini. Audit transaksi kategori ini lebih dulu.",
+            ];
+        }
+
+        if ($budgetAtRisk->isNotEmpty()) {
+            $budget = $budgetAtRisk->first();
+            $insights[] = [
+                'level' => $budget['remaining'] < 0 ? 'danger' : 'warning',
+                'title' => 'Budget berisiko',
+                'body' => "{$budget['category']->name} sudah mencapai {$budget['progress']}% dari batas bulanan.",
+            ];
+        }
+
+        if ($expenseVolatility >= 35) {
+            $insights[] = [
+                'level' => 'warning',
+                'title' => 'Pengeluaran tidak stabil',
+                'body' => "Volatilitas pengeluaran 12 bulan terakhir {$expenseVolatility}%. Pisahkan belanja tahunan atau tidak rutin agar analisa bulanan lebih akurat.",
+            ];
+        }
+
+        if ($runwayMonths !== null && $runwayMonths < 3) {
+            $insights[] = [
+                'level' => 'danger',
+                'title' => 'Dana bertahan masih tipis',
+                'body' => "Saldo saat ini setara sekitar {$runwayMonths} bulan rata-rata pengeluaran. Prioritaskan dana darurat sampai minimal 3-6 bulan.",
+            ];
+        }
+
+        return $insights ?: [[
+            'level' => 'info',
+            'title' => 'Data masih perlu diperkaya',
+            'body' => 'Tambahkan transaksi rutin, merchant, dan budget per kategori agar analisa risiko semakin tajam.',
+        ]];
+    }
+}
