@@ -62,7 +62,7 @@
 @section('content')
 <div class="header-section">
     <div class="header-title">
-        <h1>Analisa Keuangan (Terbaru)</h1>
+        <h1>Analisa Keuangan</h1>
         <p>Evaluasi pengeluaran, perbandingan pemasukan, dan pencapaian anggaran Anda.</p>
     </div>
     <div class="header-action">
