@@ -92,7 +92,7 @@ class FinanceController extends Controller
         $end = $selectedMonth->copy()->endOfMonth();
 
         $transactions = Transaction::with(['account', 'category'])
-            ->whereBetween('transaction_date', [$selectedMonth->copy()->subMonths(11)->startOfMonth(), $end])
+            ->whereBetween('transaction_date', [$selectedMonth->copy()->subMonths(5)->startOfMonth(), $end])
             ->oldest('transaction_date')
             ->get();
 
@@ -102,7 +102,7 @@ class FinanceController extends Controller
         $monthlyNet = $monthlyIncome - $monthlyExpense;
         $balance = Account::with('transactions')->get()->sum(fn (Account $account) => $account->balance);
 
-        $series = collect(range(11, 0))->map(function (int $monthsAgo) use ($selectedMonth, $transactions) {
+        $series = collect(range(5, 0))->map(function (int $monthsAgo) use ($selectedMonth, $transactions) {
             $month = $selectedMonth->copy()->subMonths($monthsAgo)->startOfMonth();
             $items = $transactions->filter(fn (Transaction $transaction) => $transaction->transaction_date->isSameMonth($month));
             $income = (float) $items->where('type', 'income')->sum('amount');
@@ -113,28 +113,10 @@ class FinanceController extends Controller
                 'income' => $income,
                 'expense' => $expense,
                 'net' => $income - $expense,
-                'savings_rate' => $income > 0 ? round((($income - $expense) / $income) * 100, 1) : 0,
-                'transactions' => $items->count(),
             ];
         });
 
-        $avgIncome = round($series->avg('income') ?? 0);
-        $avgExpense = round($series->avg('expense') ?? 0);
-        $avgNet = round($series->avg('net') ?? 0);
-        $expenseVolatility = $this->calculateVolatility($series->pluck('expense')->all());
-        $runwayMonths = $avgExpense > 0 ? round($balance / $avgExpense, 1) : null;
-
-        $daysInMonth = $selectedMonth->daysInMonth;
-        $elapsedDays = $selectedMonth->isSameMonth(now()) ? max(1, now()->day) : $daysInMonth;
-        $projectedExpense = $elapsedDays > 0 ? round(($monthlyExpense / $elapsedDays) * $daysInMonth) : 0;
-        $projectedNet = $monthlyIncome - $projectedExpense;
-        $projectedSavingsRate = $monthlyIncome > 0 ? round(($projectedNet / $monthlyIncome) * 100, 1) : 0;
-
         $budgets = $this->getBudgetsWithProgress($selectedMonth, $monthlyTransactions);
-        $budgetAtRisk = $budgets
-            ->filter(fn ($budget) => $budget['progress'] >= 75 || $budget['remaining'] < 0)
-            ->sortByDesc('progress')
-            ->values();
 
         $categoryAnalysis = $monthlyTransactions
             ->where('type', 'expense')
@@ -151,56 +133,16 @@ class FinanceController extends Controller
                     'color' => $category->color,
                     'total' => $total,
                     'count' => $items->count(),
-                    'average' => $items->count() > 0 ? round($total / $items->count()) : 0,
                     'percentage' => $monthlyExpense > 0 ? round(($total / $monthlyExpense) * 100, 1) : 0,
                     'budget_limit' => $budget['limit'] ?? null,
                     'budget_remaining' => $budget['remaining'] ?? null,
-                    'risk' => $progress === null ? 'Belum ada budget' : ($progress >= 100 ? 'Melewati batas' : ($progress >= 75 ? 'Perlu dijaga' : 'Sehat')),
+                    'budget_progress' => $progress,
                 ];
             })
             ->sortByDesc('total')
             ->values();
 
-        $merchantAnalysis = $monthlyTransactions
-            ->where('type', 'expense')
-            ->filter(fn (Transaction $transaction) => filled($transaction->merchant))
-            ->groupBy(fn (Transaction $transaction) => strtolower($transaction->merchant))
-            ->map(function ($items) {
-                $total = (float) $items->sum('amount');
-
-                return [
-                    'name' => $items->first()->merchant,
-                    'total' => $total,
-                    'count' => $items->count(),
-                    'average' => $items->count() > 0 ? round($total / $items->count()) : 0,
-                ];
-            })
-            ->sortByDesc('total')
-            ->take(8)
-            ->values();
-
-        $weekdayAnalysis = collect(range(0, 6))->map(function (int $day) use ($monthlyTransactions) {
-            $items = $monthlyTransactions
-                ->where('type', 'expense')
-                ->filter(fn (Transaction $transaction) => $transaction->transaction_date->dayOfWeek === $day);
-
-            return [
-                'label' => Carbon::create()->startOfWeek(Carbon::SUNDAY)->addDays($day)->translatedFormat('D'),
-                'total' => (float) $items->sum('amount'),
-                'count' => $items->count(),
-            ];
-        });
-
-        $insights = $this->buildAdvancedInsights(
-            $monthlyIncome,
-            $monthlyExpense,
-            $projectedExpense,
-            $projectedSavingsRate,
-            $categoryAnalysis,
-            $budgetAtRisk,
-            $expenseVolatility,
-            $runwayMonths
-        );
+        $insights = $this->buildSimplifiedInsights($monthlyIncome, $monthlyExpense, $categoryAnalysis, $budgets);
 
         return view('finance.analytics', [
             'selectedMonth' => $selectedMonth,
@@ -209,21 +151,10 @@ class FinanceController extends Controller
                 'income' => $monthlyIncome,
                 'expense' => $monthlyExpense,
                 'net' => $monthlyNet,
-                'avgIncome' => $avgIncome,
-                'avgExpense' => $avgExpense,
-                'avgNet' => $avgNet,
-                'runwayMonths' => $runwayMonths,
-                'expenseVolatility' => $expenseVolatility,
-                'projectedExpense' => $projectedExpense,
-                'projectedNet' => $projectedNet,
-                'projectedSavingsRate' => $projectedSavingsRate,
-                'recurringExpense' => (float) $monthlyTransactions->where('type', 'expense')->where('is_recurring', true)->sum('amount'),
             ],
             'series' => $series,
             'categoryAnalysis' => $categoryAnalysis,
-            'merchantAnalysis' => $merchantAnalysis,
-            'weekdayAnalysis' => $weekdayAnalysis,
-            'budgetAtRisk' => $budgetAtRisk,
+            'budgets' => $budgets,
             'insights' => $insights,
         ]);
     }
@@ -407,57 +338,29 @@ class FinanceController extends Controller
         return $insights ?: ['Data belum cukup untuk analisa mendalam. Tambahkan transaksi rutin agar rekomendasi lebih akurat.'];
     }
 
-    private function calculateVolatility(array $values): float
+    private function buildSimplifiedInsights(float $income, float $expense, $categoryAnalysis, $budgets): array
     {
-        $values = array_map('floatval', array_filter($values, fn ($value) => $value > 0));
-        $count = count($values);
-
-        if ($count < 2) {
-            return 0;
-        }
-
-        $average = array_sum($values) / $count;
-        if ($average <= 0) {
-            return 0;
-        }
-
-        $variance = array_sum(array_map(fn ($value) => ($value - $average) ** 2, $values)) / $count;
-
-        return round((sqrt($variance) / $average) * 100, 1);
-    }
-
-    private function buildAdvancedInsights(
-        float $income,
-        float $expense,
-        float $projectedExpense,
-        float $projectedSavingsRate,
-        $categoryAnalysis,
-        $budgetAtRisk,
-        float $expenseVolatility,
-        ?float $runwayMonths
-    ): array {
         $insights = [];
 
-        if ($income > 0 && $projectedExpense > $income) {
-            $over = $projectedExpense - $income;
+        $savingsRate = $income > 0 ? round((($income - $expense) / $income) * 100, 1) : 0;
+
+        if ($income > 0 && $expense > $income) {
             $insights[] = [
                 'level' => 'danger',
-                'title' => 'Proyeksi defisit bulan ini',
-                'body' => 'Jika pola belanja tidak berubah, pengeluaran berpotensi melewati pemasukan sekitar Rp '.number_format($over, 0, ',', '.').'.',
+                'title' => 'Pengeluaran melebihi pemasukan',
+                'body' => 'Bulan ini pengeluaran Anda lebih besar dari pemasukan. Coba batasi pengeluaran non-esensial.',
             ];
-        }
-
-        if ($projectedSavingsRate >= 20) {
+        } elseif ($savingsRate >= 20) {
             $insights[] = [
                 'level' => 'success',
-                'title' => 'Rasio tabungan dalam zona sehat',
-                'body' => "Proyeksi rasio tabungan {$projectedSavingsRate}%. Pertahankan alokasi ini dan arahkan surplus ke target prioritas.",
+                'title' => 'Tabungan dalam zona aman',
+                'body' => "Rasio tabungan Anda bulan ini mencapai {$savingsRate}%. Pertahankan pola keuangan sehat ini!",
             ];
-        } elseif ($income > 0) {
+        } else {
             $insights[] = [
                 'level' => 'warning',
-                'title' => 'Rasio tabungan perlu dinaikkan',
-                'body' => "Proyeksi rasio tabungan {$projectedSavingsRate}%. Target aman biasanya minimal 20% dari pemasukan.",
+                'title' => 'Rasio tabungan perlu ditingkatkan',
+                'body' => "Rasio tabungan Anda saat ini {$savingsRate}%. Idealnya sisihkan minimal 20% untuk tabungan.",
             ];
         }
 
@@ -465,40 +368,24 @@ class FinanceController extends Controller
         if ($topCategory) {
             $insights[] = [
                 'level' => 'info',
-                'title' => 'Kategori paling dominan',
-                'body' => "{$topCategory['name']} menyerap {$topCategory['percentage']}% dari pengeluaran bulan ini. Audit transaksi kategori ini lebih dulu.",
+                'title' => 'Kategori pengeluaran tertinggi',
+                'body' => "Kategori {$topCategory['name']} menyerap {$topCategory['percentage']}% dari total pengeluaran bulan ini.",
             ];
         }
 
-        if ($budgetAtRisk->isNotEmpty()) {
-            $budget = $budgetAtRisk->first();
-            $insights[] = [
-                'level' => $budget['remaining'] < 0 ? 'danger' : 'warning',
-                'title' => 'Budget berisiko',
-                'body' => "{$budget['category']->name} sudah mencapai {$budget['progress']}% dari batas bulanan.",
-            ];
-        }
-
-        if ($expenseVolatility >= 35) {
-            $insights[] = [
-                'level' => 'warning',
-                'title' => 'Pengeluaran tidak stabil',
-                'body' => "Volatilitas pengeluaran 12 bulan terakhir {$expenseVolatility}%. Pisahkan belanja tahunan atau tidak rutin agar analisa bulanan lebih akurat.",
-            ];
-        }
-
-        if ($runwayMonths !== null && $runwayMonths < 3) {
+        $overBudget = $budgets->first(fn ($budget) => $budget['remaining'] < 0);
+        if ($overBudget) {
             $insights[] = [
                 'level' => 'danger',
-                'title' => 'Dana bertahan masih tipis',
-                'body' => "Saldo saat ini setara sekitar {$runwayMonths} bulan rata-rata pengeluaran. Prioritaskan dana darurat sampai minimal 3-6 bulan.",
+                'title' => 'Anggaran terlewati',
+                'body' => "Pengeluaran untuk kategori {$overBudget['category']->name} sudah melewati anggaran yang ditentukan.",
             ];
         }
 
         return $insights ?: [[
             'level' => 'info',
-            'title' => 'Data masih perlu diperkaya',
-            'body' => 'Tambahkan transaksi rutin, merchant, dan budget per kategori agar analisa risiko semakin tajam.',
+            'title' => 'Belum ada data yang cukup',
+            'body' => 'Tambahkan beberapa transaksi pemasukan dan pengeluaran untuk melihat rekomendasi otomatis.',
         ]];
     }
 }
