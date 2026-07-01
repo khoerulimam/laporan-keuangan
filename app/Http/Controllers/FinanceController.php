@@ -175,11 +175,22 @@ class FinanceController extends Controller
             ->latest()
             ->paginate(15);
 
+        $globalBudget = MonthlyBudget::where('month', $selectedMonth->month)
+            ->where('year', $selectedMonth->year)->first();
+            
+        $totalExpense = Transaction::whereYear('transaction_date', $selectedMonth->year)
+            ->whereMonth('transaction_date', $selectedMonth->month)
+            ->where('type', 'expense')
+            ->sum('amount');
+            
+        $remainingBudget = $globalBudget ? $globalBudget->amount - $totalExpense : null;
+
         return view('finance.transactions', [
             'transactions' => $transactions,
             'selectedMonth' => $selectedMonth,
             'accounts' => Account::orderBy('name')->get(),
             'categories' => Category::orderBy('type')->orderBy('name')->get(),
+            'remainingBudget' => $remainingBudget,
         ]);
     }
 

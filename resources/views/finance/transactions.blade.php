@@ -157,3 +157,27 @@
     </div>
 </div>
 @endsection
+
+@section('scripts')
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const form = document.querySelector('#addTransactionModal form');
+        const remainingBudget = {{ $remainingBudget ?? 'null' }};
+
+        if (form) {
+            form.addEventListener('submit', function(e) {
+                const type = form.querySelector('input[name="type"]:checked').value;
+                const amount = parseInt(form.querySelector('input[name="amount"]').value) || 0;
+
+                if (type === 'expense' && remainingBudget !== null) {
+                    if (amount > remainingBudget) {
+                        if (!confirm("Transaksi ini akan membuat anggaran utama Anda minus (Over budget). Tetap lanjutkan?")) {
+                            e.preventDefault();
+                        }
+                    }
+                }
+            });
+        }
+    });
+</script>
+@endsection
