@@ -248,6 +248,47 @@ class FinanceController extends Controller
         ]);
     }
 
+    public function categories()
+    {
+        return view('finance.categories', [
+            'categories' => Category::orderBy('type')->orderBy('name')->get(),
+        ]);
+    }
+
+    public function storeCategory(Request $request)
+    {
+        Category::create($request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'type' => ['required', 'in:income,expense'],
+            'icon' => ['nullable', 'string', 'max:20'],
+            'color' => ['nullable', 'string', 'max:20'],
+        ]));
+
+        return back()->with('status', 'Kategori baru ditambahkan.');
+    }
+
+    public function updateCategory(Request $request, Category $category)
+    {
+        $category->update($request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'type' => ['required', 'in:income,expense'],
+            'icon' => ['nullable', 'string', 'max:20'],
+            'color' => ['nullable', 'string', 'max:20'],
+        ]));
+
+        return back()->with('status', 'Kategori berhasil diperbarui.');
+    }
+
+    public function destroyCategory(Category $category)
+    {
+        try {
+            $category->delete();
+            return back()->with('status', 'Kategori berhasil dihapus.');
+        } catch (\Illuminate\Database\QueryException $e) {
+            return back()->withErrors(['error' => 'Kategori tidak dapat dihapus karena sedang digunakan dalam transaksi atau anggaran.']);
+        }
+    }
+
     public function storeTransaction(Request $request)
     {
         Transaction::create($request->validate([

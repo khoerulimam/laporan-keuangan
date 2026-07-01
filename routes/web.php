@@ -38,4 +38,10 @@ Route::middleware('auth')->group(function () {
     Route::post('/goals', [FinanceController::class, 'storeGoal'])->name('goals.store');
     Route::patch('/saving-goals/{goal}', [FinanceController::class, 'updateGoal'])->name('saving-goals.update');
     Route::delete('/saving-goals/{goal}', [FinanceController::class, 'destroyGoal'])->name('goals.destroy');
+    
+    // Categories
+    Route::get('/categories', [FinanceController::class, 'categories'])->name('categories.index');
+    Route::post('/categories', [FinanceController::class, 'storeCategory'])->name('categories.store');
+    Route::patch('/categories/{category}', [FinanceController::class, 'updateCategory'])->name('categories.update');
+    Route::delete('/categories/{category}', [FinanceController::class, 'destroyCategory'])->name('categories.destroy');
 });

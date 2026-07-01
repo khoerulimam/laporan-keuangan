@@ -398,6 +398,10 @@
                 <i class="fas fa-university"></i>
                 <span>Akun Saya</span>
             </a>
+            <a href="{{ route('categories.index') }}" class="nav-link {{ request()->routeIs('categories.*') ? 'active' : '' }}">
+                <i class="fas fa-tags"></i>
+                <span>Kategori</span>
+            </a>
             <a href="{{ route('budgets.index') }}" class="nav-link {{ request()->routeIs('budgets.*') ? 'active' : '' }}">
                 <i class="fas fa-chart-pie"></i>
                 <span>Anggaran</span>
