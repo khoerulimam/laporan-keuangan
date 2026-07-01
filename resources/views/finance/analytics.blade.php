@@ -191,8 +191,45 @@
         </div>
     </div>
 
-    <!-- Right Column: Auto Insights & Budget Status -->
+    <!-- Right Column: Specific Items & Auto Insights & Budget Status -->
     <div class="col-lg-4">
+        <!-- Specific Item Breakdown -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header border-0 bg-transparent pt-4 px-4">
+                <h5 class="mb-0 fw-bold">Top Pengeluaran Spesifik</h5>
+                <div class="small text-muted mt-1">Berdasarkan nama barang (deskripsi)</div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th class="ps-4">Item</th>
+                                <th class="pe-4 text-end">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @forelse(collect($itemAnalysis)->take(5) as $item)
+                                <tr>
+                                    <td class="ps-4">
+                                        <div class="fw-semibold text-dark">{{ $item['name'] }}</div>
+                                        <div class="small text-muted">
+                                            {{ $item['category'] }} &bull; {{ $item['count'] }}x ({{ $item['percentage'] }}%)
+                                        </div>
+                                    </td>
+                                    <td class="pe-4 text-end fw-bold text-dark">Rp {{ number_format($item['total'], 0, ',', '.') }}</td>
+                                </tr>
+                            @empty
+                                <tr>
+                                    <td colspan="2" class="text-center py-4 text-muted">Belum ada data pengeluaran spesifik.</td>
+                                </tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <!-- Automatic Insights -->
         <div class="card border-0 shadow-sm mb-4">
             <div class="card-header border-0 bg-transparent pt-4 px-4">

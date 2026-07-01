@@ -147,7 +147,24 @@ class FinanceController extends Controller
             ->sortByDesc('total')
             ->values();
 
-        $insights = $this->buildSimplifiedInsights($monthlyIncome, $monthlyExpense, $categoryAnalysis, $budgets);
+        $itemAnalysis = $monthlyTransactions
+            ->where('type', 'expense')
+            ->groupBy(fn ($item) => strtolower(trim($item->description)))
+            ->map(function ($items, $description) use ($monthlyExpense) {
+                $total = (float) $items->sum('amount');
+                return [
+                    'name' => ucwords($description),
+                    'total' => $total,
+                    'count' => $items->count(),
+                    'percentage' => $monthlyExpense > 0 ? round(($total / $monthlyExpense) * 100, 1) : 0,
+                    'category' => $items->first()->category->name,
+                    'color' => $items->first()->category->color,
+                ];
+            })
+            ->sortByDesc('total')
+            ->values();
+
+        $insights = $this->buildSimplifiedInsights($monthlyIncome, $monthlyExpense, $categoryAnalysis, $budgets, $itemAnalysis);
 
         return view('finance.analytics', [
             'selectedMonth' => $selectedMonth,
@@ -161,6 +178,7 @@ class FinanceController extends Controller
             'categoryAnalysis' => $categoryAnalysis,
             'budgets' => $budgets,
             'insights' => $insights,
+            'itemAnalysis' => $itemAnalysis,
         ]);
     }
 
@@ -376,7 +394,7 @@ class FinanceController extends Controller
         return $insights ?: ['Data belum cukup untuk analisa mendalam. Tambahkan transaksi rutin agar rekomendasi lebih akurat.'];
     }
 
-    private function buildSimplifiedInsights(float $income, float $expense, $categoryAnalysis, $budgets): array
+    private function buildSimplifiedInsights(float $income, float $expense, $categoryAnalysis, $budgets, $itemAnalysis = null): array
     {
         $insights = [];
 
@@ -418,6 +436,17 @@ class FinanceController extends Controller
                 'title' => 'Anggaran terlewati',
                 'body' => "Pengeluaran untuk kategori {$overBudget['category']->name} sudah melewati anggaran yang ditentukan.",
             ];
+        }
+        
+        if ($itemAnalysis && $itemAnalysis->isNotEmpty()) {
+            $topItem = $itemAnalysis->first();
+            if ($topItem['percentage'] > 10) {
+                $insights[] = [
+                    'level' => 'warning',
+                    'title' => 'Pengeluaran Spesifik Tinggi',
+                    'body' => "Anda menghabiskan {$topItem['percentage']}% pengeluaran bulan ini hanya untuk \"{$topItem['name']}\" (Rp " . number_format($topItem['total'], 0, ',', '.') . "). Pertimbangkan untuk mengevaluasinya.",
+                ];
+            }
         }
 
         return $insights ?: [[
