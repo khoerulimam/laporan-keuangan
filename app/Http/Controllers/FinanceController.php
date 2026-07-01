@@ -342,6 +342,12 @@ class FinanceController extends Controller
         return back()->with('status', 'Anggaran diperbarui.');
     }
 
+    public function destroyBudget(Budget $budget)
+    {
+        $budget->delete();
+        return back()->with('status', 'Anggaran kategori berhasil dihapus.');
+    }
+
     public function storeMonthlyBudget(Request $request)
     {
         $data = $request->validate([

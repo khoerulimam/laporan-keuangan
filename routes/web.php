@@ -31,6 +31,7 @@ Route::middleware('auth')->group(function () {
     // Budgets
     Route::get('/budgets', [FinanceController::class, 'budgets'])->name('budgets.index');
     Route::post('/budgets', [FinanceController::class, 'storeBudget'])->name('budgets.store');
+    Route::delete('/budgets/{budget}', [FinanceController::class, 'destroyBudget'])->name('budgets.destroy');
     Route::post('/budgets/monthly', [FinanceController::class, 'storeMonthlyBudget'])->name('budgets.monthly.store');
     
     // Saving Goals

@@ -69,10 +69,17 @@
                             <small class="text-muted">Target: Rp {{ number_format($budget['limit'], 0, ',', '.') }}</small>
                         </div>
                     </div>
-                    <div class="text-end">
+                    <div class="d-flex align-items-center gap-3">
                         <span class="fw-bold {{ $budget['progress'] > 90 ? 'text-danger' : ($budget['progress'] > 70 ? 'text-warning' : 'text-success') }}">
                             {{ $budget['progress'] }}%
                         </span>
+                        <form action="{{ route('budgets.destroy', $budget['id']) }}" method="POST" onsubmit="return confirm('Hapus batas anggaran untuk kategori ini?')">
+                            @csrf
+                            @method('DELETE')
+                            <button type="submit" class="btn btn-sm btn-light text-danger" title="Hapus Anggaran">
+                                <i class="fas fa-trash-alt"></i>
+                            </button>
+                        </form>
                     </div>
                 </div>
                 
