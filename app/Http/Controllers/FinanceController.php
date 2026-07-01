@@ -257,24 +257,34 @@ class FinanceController extends Controller
 
     public function storeCategory(Request $request)
     {
-        Category::create($request->validate([
+        $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'type' => ['required', 'in:income,expense'],
             'icon' => ['nullable', 'string', 'max:20'],
             'color' => ['nullable', 'string', 'max:20'],
-        ]));
+        ]);
+
+        $data['icon'] = $data['icon'] ?? 'dot-circle';
+        $data['color'] = $data['color'] ?? '#64748b';
+
+        Category::create($data);
 
         return back()->with('status', 'Kategori baru ditambahkan.');
     }
 
     public function updateCategory(Request $request, Category $category)
     {
-        $category->update($request->validate([
+        $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'type' => ['required', 'in:income,expense'],
             'icon' => ['nullable', 'string', 'max:20'],
             'color' => ['nullable', 'string', 'max:20'],
-        ]));
+        ]);
+
+        $data['icon'] = $data['icon'] ?? 'dot-circle';
+        $data['color'] = $data['color'] ?? '#64748b';
+
+        $category->update($data);
 
         return back()->with('status', 'Kategori berhasil diperbarui.');
     }
