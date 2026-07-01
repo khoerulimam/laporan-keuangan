@@ -387,6 +387,16 @@
                         {{ $summary['expenseTrend'] > 0 ? '+' : '' }}{{ $summary['expenseTrend'] }}%
                     </strong>
                 </div>
+                <div class="watch-item">
+                    <span class="text-muted">Anggaran Utama</span>
+                    @if($globalBudget)
+                        <strong class="{{ $globalBudget->amount >= $summary['expense'] ? 'text-success' : 'text-danger' }}">
+                            Sisa: Rp {{ number_format($globalBudget->amount - $summary['expense'], 0, ',', '.') }}
+                        </strong>
+                    @else
+                        <strong class="text-muted">Belum diset</strong>
+                    @endif
+                </div>
             </div>
         </div>
     </div>
@@ -424,6 +434,9 @@
                     <a href="{{ route('budgets.index') }}" class="btn btn-light">
                         <i class="fas fa-chart-pie me-2"></i> Review budget
                     </a>
+                    <button type="button" class="btn btn-light" data-bs-toggle="modal" data-bs-target="#setMonthlyBudgetModal">
+                        <i class="fas fa-wallet me-2"></i> Set Anggaran Utama
+                    </button>
                 </div>
             </div>
         </div>
@@ -478,6 +491,34 @@
         </div>
     </div>
 </div>
+
+<!-- Set Monthly Budget Modal -->
+<div class="modal fade" id="setMonthlyBudgetModal" tabindex="-1">
+    <div class="modal-dialog">
+        <form action="{{ route('budgets.monthly.store') }}" method="POST" class="modal-content">
+            @csrf
+            <div class="modal-header">
+                <h5 class="modal-title">Set Anggaran Utama Bulan Ini</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" name="month" value="{{ $selectedMonth->month }}">
+                <input type="hidden" name="year" value="{{ $selectedMonth->year }}">
+                
+                <div class="mb-3">
+                    <label class="form-label">Total Anggaran (Rp)</label>
+                    <input type="number" name="amount" class="form-control" required min="1" value="{{ $globalBudget ? (int)$globalBudget->amount : '' }}">
+                    <div class="form-text">Anggaran utama untuk seluruh pengeluaran di bulan {{ $selectedMonth->translatedFormat('F Y') }}.</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Batal</button>
+                <button type="submit" class="btn btn-primary">Simpan Anggaran</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 @endsection
 
 @section('scripts')

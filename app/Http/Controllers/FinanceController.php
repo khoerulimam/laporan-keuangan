@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Account;
 use App\Models\Budget;
 use App\Models\Category;
+use App\Models\MonthlyBudget;
 use App\Models\SavingGoal;
 use App\Models\Transaction;
 use Carbon\Carbon;
@@ -74,6 +75,9 @@ class FinanceController extends Controller
 
         $insights = $this->buildInsights($income, $expense, $categoryExpenses, $budgets, $savingsRate);
 
+        $globalBudget = MonthlyBudget::where('month', $selectedMonth->month)
+            ->where('year', $selectedMonth->year)->first();
+
         return view('finance.dashboard', [
             'selectedMonth' => $selectedMonth,
             'summary' => compact('income', 'expense', 'balance', 'savingsRate', 'budgetCompliance', 'expenseTrend'),
@@ -82,6 +86,7 @@ class FinanceController extends Controller
             'insights' => $insights,
             'recentTransactions' => $transactions->take(5),
             'savingGoals' => SavingGoal::orderBy('target_date')->get(),
+            'globalBudget' => $globalBudget,
         ]);
     }
 
@@ -193,11 +198,17 @@ class FinanceController extends Controller
 
         $monthlyTransactions = Transaction::whereBetween('transaction_date', [$start, $end])->get();
         $budgets = $this->getBudgetsWithProgress($selectedMonth, $monthlyTransactions);
+        
+        $globalBudget = MonthlyBudget::where('month', $selectedMonth->month)
+            ->where('year', $selectedMonth->year)->first();
+        $totalExpense = $monthlyTransactions->where('type', 'expense')->sum('amount');
 
         return view('finance.budgets', [
             'budgets' => $budgets,
             'selectedMonth' => $selectedMonth,
             'expenseCategories' => Category::where('type', 'expense')->orderBy('name')->get(),
+            'globalBudget' => $globalBudget,
+            'totalExpense' => $totalExpense,
         ]);
     }
 
@@ -259,6 +270,22 @@ class FinanceController extends Controller
         );
 
         return back()->with('status', 'Anggaran diperbarui.');
+    }
+
+    public function storeMonthlyBudget(Request $request)
+    {
+        $data = $request->validate([
+            'amount' => ['required', 'numeric', 'min:1'],
+            'month' => ['required', 'integer', 'between:1,12'],
+            'year' => ['required', 'integer', 'between:2020,2100'],
+        ]);
+
+        MonthlyBudget::updateOrCreate(
+            ['month' => $data['month'], 'year' => $data['year']],
+            ['amount' => $data['amount']]
+        );
+
+        return back()->with('status', 'Anggaran utama bulanan diperbarui.');
     }
 
     public function storeGoal(Request $request)

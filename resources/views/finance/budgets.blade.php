@@ -18,6 +18,42 @@
     </div>
 </div>
 
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-0 shadow-sm bg-primary text-white">
+            <div class="card-body p-4 d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="mb-1">Anggaran Utama Bulan Ini</h5>
+                    <p class="mb-0 opacity-75 small">Total batas pengeluaran untuk seluruh kategori di bulan {{ $selectedMonth->translatedFormat('F Y') }}</p>
+                </div>
+                <div class="text-end">
+                    @if($globalBudget)
+                        <h3 class="mb-1 fw-bold">Rp {{ number_format($globalBudget->amount, 0, ',', '.') }}</h3>
+                        @php
+                            $remaining = $globalBudget->amount - $totalExpense;
+                        @endphp
+                        <p class="mb-0 {{ $remaining < 0 ? 'text-danger fw-bold' : 'opacity-75' }}">
+                            {{ $remaining < 0 ? 'Over budget: Rp ' . number_format(abs($remaining), 0, ',', '.') : 'Sisa: Rp ' . number_format($remaining, 0, ',', '.') }}
+                        </p>
+                    @else
+                        <h4 class="mb-1 opacity-75">Belum diset</h4>
+                        <button type="button" class="btn btn-light btn-sm mt-2 text-primary fw-bold" data-bs-toggle="modal" data-bs-target="#setMonthlyBudgetModal">
+                            Set Anggaran Utama
+                        </button>
+                    @endif
+                </div>
+            </div>
+            @if($globalBudget)
+            <div class="card-footer bg-white bg-opacity-10 border-0 p-3 text-end">
+                <button type="button" class="btn btn-outline-light btn-sm" data-bs-toggle="modal" data-bs-target="#setMonthlyBudgetModal">
+                    Update Anggaran Utama
+                </button>
+            </div>
+            @endif
+        </div>
+    </div>
+</div>
+
 <div class="row g-4 mb-4">
     @forelse($budgets as $budget)
     <div class="col-md-6">
@@ -107,4 +143,31 @@
         </div>
     </div>
 </div>
+<!-- Set Monthly Budget Modal -->
+<div class="modal fade" id="setMonthlyBudgetModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <form action="{{ route('budgets.monthly.store') }}" method="POST" class="modal-content border-0 shadow">
+            @csrf
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title fw-bold">Set Anggaran Utama Bulan Ini</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-4">
+                <input type="hidden" name="month" value="{{ $selectedMonth->month }}">
+                <input type="hidden" name="year" value="{{ $selectedMonth->year }}">
+                
+                <div class="mb-0">
+                    <label class="form-label small fw-bold text-muted">TOTAL ANGGARAN (RP)</label>
+                    <input type="number" name="amount" class="form-control form-control-lg" required min="1" value="{{ $globalBudget ? (int)$globalBudget->amount : '' }}" placeholder="0">
+                    <div class="form-text mt-2">Anggaran utama untuk seluruh pengeluaran di bulan {{ $selectedMonth->translatedFormat('F Y') }}.</div>
+                </div>
+            </div>
+            <div class="modal-footer border-0 pt-0 p-4">
+                <button type="button" class="btn btn-light px-4" data-bs-dismiss="modal">Batal</button>
+                <button type="submit" class="btn btn-primary px-4">Simpan Anggaran</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 @endsection
